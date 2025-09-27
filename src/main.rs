@@ -8,13 +8,22 @@ use message_handler::MessageHandler;
 
 pub mod chat_server;
 pub mod message_handler;
-fn client_handler(mut stream:TcpStream,server:Arc<dyn MessageHandler>) {
+fn client_handler(mut stream:TcpStream,server:Arc<dyn MessageHandler>,clients:Arc<Mutex<Vec<(TcpStream,String)>>>) {
     let mut buffer = [0;1024];
     stream.write_all(b"Welcome! Please enter your username: ").unwrap();
     stream.flush().unwrap();
 
     let buf_read = stream.read(&mut buffer).unwrap();
     let username = String::from_utf8_lossy(&buffer[..buf_read]).trim_end_matches(|c: char| c == '\n' || c == '\r').to_string();
+
+    {
+        let mut clients_lock = clients.lock().unwrap();
+        for (client, client_name) in clients_lock.iter_mut() {
+            if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                *client_name = username.clone();
+            }
+        }
+    }
 
     println!("{} joined the chat\n", username);
 
@@ -48,9 +57,10 @@ fn main() {
         match stream {
             Ok(stream) => {
                 let server = Arc::clone(&server);
-                let mut clients = clients.lock().unwrap();
+                let clients_for_thread:Arc<Mutex<Vec<(TcpStream,String)>>> = Arc::clone(&clients);
+                let mut clients: std::sync::MutexGuard<'_, Vec<(TcpStream, String)>> = clients.lock().unwrap();
                 clients.push((stream.try_clone().unwrap(),String::new()));
-                std::thread::spawn(move || {client_handler(stream,server)});
+                std::thread::spawn(move || {client_handler(stream,server,clients_for_thread)});
             }
             Err(e) => {
                 eprintln!("Failed to establish a connection {}",e);
