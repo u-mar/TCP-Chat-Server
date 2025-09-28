@@ -1,10 +1,10 @@
 use std::io::{Read,Write};
 use std::net::{TcpListener,TcpStream};
 use std::sync::{Arc, Mutex};
-
 use chat_server::ChatServer;
 use message_handler::MessageHandler;
-
+use chrono::Local;
+use colored::Colorize;
 
 pub mod chat_server;
 pub mod message_handler;
@@ -19,18 +19,33 @@ fn client_handler(mut stream:TcpStream,server:Arc<dyn MessageHandler>,clients:Ar
     {
         let mut clients_lock = clients.lock().unwrap();
         for (client, client_name) in clients_lock.iter_mut() {
+            let now = Local::now().format("%H:%M").to_string();
+            let joined = format!("[{}]: *** {} joined the chat ***\n",now.red(),username.green());
+            client.write_all(joined.as_bytes()).unwrap();
             if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
                 *client_name = username.clone();
             }
         }
     }
 
-    println!("{} joined the chat\n", username);
-
     loop {
         match stream.read(&mut buffer) {
             Ok(bytes) => {
                 if bytes == 0 {
+                    let mut clients_lock2 = clients.lock().unwrap();
+                    let mut left = "".to_string();
+                    for (client, client_name) in clients_lock2.iter_mut() {
+                        if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                            left = client_name.to_string();
+                        }
+
+                    }
+                    for (client, _) in clients_lock2.iter_mut() {
+                        let now = Local::now().format("%H:%M").to_string();
+                        let left_format = format!("[{}]: {} left the chat\n",now.red(),left.red());
+                        client.write_all(left_format.as_bytes()).unwrap();
+
+                    }
                     break;
                 }
                 let message = String::from_utf8_lossy(&buffer[..bytes]);
