@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use chrono::Local;
 use colored::Colorize;
-
+use crate::db::Database;
 use crate::message_handler::MessageHandler;
 
 
@@ -19,6 +19,7 @@ impl MessageHandler for ChatServer {
         messages.push(format!("{} {}",username,message));
 
         self.send_message(username, message);
+
         println!("Received message from {}:\n {}",username,message);
     }
 

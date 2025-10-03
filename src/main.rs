@@ -7,54 +7,101 @@ use chrono::Local;
 use colored::Colorize;
 
 pub mod chat_server;
+pub mod db;
 pub mod message_handler;
-fn client_handler(mut stream:TcpStream,server:Arc<dyn MessageHandler>,clients:Arc<Mutex<Vec<(TcpStream,String)>>>) {
-    let mut buffer = [0;1024];
+
+fn client_handler(
+    mut stream: TcpStream,
+    server: Arc<dyn MessageHandler>,
+    clients: Arc<Mutex<Vec<(TcpStream, String)>>>,
+) {
+    let mut buffer = [0; 1024];
     stream.write_all(b"Welcome! Please enter your username: ").unwrap();
     stream.flush().unwrap();
 
     let buf_read = stream.read(&mut buffer).unwrap();
-    let username = String::from_utf8_lossy(&buffer[..buf_read]).trim_end_matches(|c: char| c == '\n' || c == '\r').to_string();
+    let username = String::from_utf8_lossy(&buffer[..buf_read])
+        .trim_end_matches(|c: char| c == '\n' || c == '\r')
+        .to_string();
+
+    let db = db::Database::new("server.db").unwrap();
 
     {
         let mut clients_lock = clients.lock().unwrap();
+
+        db.add_user(&username).unwrap();
+        db.make_online(&username, true).unwrap();
+
+
+        clients_lock.retain(|(_, client_name)| client_name != &username);
+
+
         for (client, client_name) in clients_lock.iter_mut() {
-            let now = Local::now().format("%H:%M").to_string();
-            let joined = format!("[{}]: *** {} joined the chat ***\n",now.red(),username.green());
-            client.write_all(joined.as_bytes()).unwrap();
             if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
                 *client_name = username.clone();
             }
         }
+
+
+        let now = Local::now().format("%H:%M").to_string();
+        let joined = format!("[{}]: *** {} joined the chat ***\n", now.red(), username.green());
+        for (client, _) in clients_lock.iter_mut() {
+            let _ = client.write_all(joined.as_bytes());
+        }
+
+        if let Ok(history) = db.get_last_messages(20) {
+            for msg in history {
+                let line = format!("[{}] {}: {}\n", msg.timestamp, msg.username, msg.text);
+                stream.write_all(line.as_bytes()).unwrap();
+            }
+        }
+
+
     }
+
 
     loop {
         match stream.read(&mut buffer) {
             Ok(bytes) => {
                 if bytes == 0 {
                     let mut clients_lock2 = clients.lock().unwrap();
-                    let mut left = "".to_string();
-                    for (client, client_name) in clients_lock2.iter_mut() {
+                
+
+                    let mut left_user = None;
+                    let mut left_msg = String::new();
+                
+                    for (client, client_name) in clients_lock2.iter() {
                         if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
-                            left = client_name.to_string();
+                            db.make_online(&client_name, false).unwrap();
+                            let now = Local::now().format("%H:%M").to_string();
+                            left_msg = format!("[{}]: {} left the chat\n", now.red(), client_name.red());
+                            left_user = Some(client_name.clone());
+                            break;
                         }
-
                     }
-                    for (client, _) in clients_lock2.iter_mut() {
-                        let now = Local::now().format("%H:%M").to_string();
-                        let left_format = format!("[{}]: {} left the chat\n",now.red(),left.red());
-                        client.write_all(left_format.as_bytes()).unwrap();
+                
 
+                    clients_lock2.retain(|(client, client_name)| {
+                        !(client.peer_addr().unwrap() == stream.peer_addr().unwrap())
+                    });
+                
+
+                    if !left_msg.is_empty() {
+                        for (c, _) in clients_lock2.iter_mut() {
+                            let _ = c.write_all(left_msg.as_bytes());
+                        }
                     }
+                
                     break;
                 }
+                
+
                 let message = String::from_utf8_lossy(&buffer[..bytes]);
+                let timestamp = Local::now().format("%H:%M").to_string();
+                db.save_message(&username, &message, &timestamp).unwrap();
                 server.handle_message(&username, &message);
             }
-            Err(_) => {
-                break;
-            }
-            
+            Err(_) => break,
         }
     }
 }
