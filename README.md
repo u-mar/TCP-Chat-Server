@@ -12,6 +12,7 @@ Each user connects via TCP, chooses a username, and can send messages to all par
 - [x] Store chat history in memory (`Vec<String>`)  
 - [x] Direct messaging with `@username` 
 - [x] Add message formatting (timestamps, system messages)  
+- [x] Save chat history to a database and load
 - [ ] (Planned) WebSocket support for browser-based UI  
 
 ---
@@ -35,7 +36,6 @@ cd TCP-Chat-Server
 ---
 
 ## 🔮 Roadmap  
-- [ ] Save chat history to a **file or database**  
 - [ ] Build a **WebSocket version** for a browser-based UI  
 - [ ] Implement **user authentication** (login/register)  
 - [ ] Add **rooms/channels** so users can join different chats  
