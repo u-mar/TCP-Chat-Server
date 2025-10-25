@@ -13,6 +13,7 @@ Each user connects via TCP, chooses a username, and can send messages to all par
 - [x] Direct messaging with `@username` 
 - [x] Add message formatting (timestamps, system messages)  
 - [x] Save chat history to a database and load
+- [x] Add **rooms/channels** so users can join different chats 
 - [ ] (Planned) WebSocket support for browser-based UI  
 
 ---
