@@ -1,6 +1,8 @@
+use std::fmt::format;
 use std::io::{Read,Write};
 use std::net::{TcpListener,TcpStream};
 use std::sync::{Arc, Mutex};
+use std::vec;
 use chat_server::ChatServer;
 use message_handler::MessageHandler;
 use chrono::Local;
@@ -24,7 +26,8 @@ fn client_handler(
         .trim_end_matches(|c: char| c == '\n' || c == '\r')
         .to_string();
 
-    let db = db::Database::new("server.db").unwrap();
+    let db = db::Database::new("test.db").unwrap();
+    let mut current_room_id = db.get_room_id("general").unwrap();
 
     {
         let mut clients_lock = clients.lock().unwrap();
@@ -97,9 +100,91 @@ fn client_handler(
                 
 
                 let message = String::from_utf8_lossy(&buffer[..bytes]);
+                let parts:Vec<&str> = message.trim().split_whitespace().collect();
                 let timestamp = Local::now().format("%H:%M").to_string();
-                db.save_message(&username, &message, &timestamp).unwrap();
-                server.handle_message(&username, &message);
+                if message.starts_with("/"){
+                    if message.trim() == "/users" {
+                        let users = db.get_users().unwrap();
+                        for user in users {
+                            println!("{:?}",user);
+                        }
+                    }
+                    
+                    else if message.trim().starts_with("/rooms") {
+                        let rooms = db.get_rooms().unwrap();
+                        for room in rooms {
+                            println!("{:?}",room);
+                        }
+                    }
+                    // create rooms
+                    else if message.trim().starts_with("/create") {
+                        if parts.len() < 2 {
+                            let _ = stream.write_all(b"Usage: /create <room_name>\n");
+                        }
+                        let room_name = parts[1];
+                        match db.create_room(room_name) {
+                            Ok(_) => {
+                                let reply = format!("Room {} Created Successfully!\n",room_name);
+                                let _ = stream.write_all(reply.as_bytes());
+                            } 
+                            Err(_) => {
+                                let reply = format!("Error Creating {} Room\n",room_name);
+                                let _ = stream.write_all(reply.as_bytes());
+                            }
+                        }
+                    }
+
+                    else if message.trim().starts_with("/join") {
+                        if parts.len() < 2 {
+                            let reply = format!("Usage: /join <room_name>\n");
+                            let _ = stream.write_all(reply.as_bytes());
+                        }
+                        let room_name = parts[1];
+                        let room_id = db.get_room_id(&room_name).unwrap();
+                        let user_id = db.get_user_id(&username).unwrap();
+
+                        match db.join_room(&user_id, &room_id) {
+                            Ok(_) => {
+                                let reply = format!("Room {} Joined Successfully!\n",room_name.green());
+                                current_room_id = db.get_room_id(room_name).unwrap();
+                                let _ = stream.write_all(reply.as_bytes());
+                            } 
+                            Err(_) => {
+                                let reply = format!("Error Joining {} Room\n",room_name);
+                                let _ = stream.write_all(reply.as_bytes());
+                            }
+                        }
+
+                    }
+
+                    // leave room
+                    else if message.trim().starts_with("/leave") {
+                        if parts.len() < 2 {
+                            let reply = format!("Usage: /leave <room_name>\n");
+                            let _ = stream.write_all(reply.as_bytes());
+                        }
+                        let room_name = parts[1];
+                        let room_id = db.get_room_id(&room_name).unwrap();
+                        let user_id = db.get_user_id(&username).unwrap();
+
+                        match db.leave_room(&user_id, &room_id) {
+                            Ok(_) => {
+                                let reply = format!("Room {} Left Successfully!\n",room_name.red());
+                                let _ = stream.write_all(reply.as_bytes());
+                            } 
+                            Err(_) => {
+                                let reply = format!("Error Leaving {} Room\n",room_name.red());
+                                let _ = stream.write_all(reply.as_bytes());
+                            }
+                        }
+
+                    }
+
+                }
+                else{
+                    db.save_message(&username, &message, &timestamp,&current_room_id).unwrap();
+                    server.handle_message(&username, &message);
+                }
             }
             Err(_) => break,
         }
@@ -131,3 +216,4 @@ fn main() {
     }
 }
 
+// add command / users,rooms,join,create,leave // do this tommorow
