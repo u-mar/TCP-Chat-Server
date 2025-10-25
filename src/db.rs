@@ -53,10 +53,10 @@ impl Database {
             FOREIGN KEY(room_id) REFERENCES rooms(id)
         )",() )?;
 
-        conn.execute(
-            "INSERT OR IGNORE INTO rooms (room_name) VALUES ('general')",
-            (),
-        )?;
+        //conn.execute(
+         //   "INSERT OR IGNORE INTO rooms (room_name) VALUES ('general')",
+         //   (),
+        //)?;
     
         
         Ok(Self { conn })

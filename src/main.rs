@@ -15,7 +15,7 @@ pub mod message_handler;
 fn client_handler(
     mut stream: TcpStream,
     server: Arc<dyn MessageHandler>,
-    clients: Arc<Mutex<Vec<(TcpStream, String)>>>,
+    clients: Arc<Mutex<Vec<(TcpStream, String,i64)>>>,
 ) {
     let mut buffer = [0; 1024];
     stream.write_all(b"Welcome! Please enter your username: ").unwrap();
@@ -36,10 +36,10 @@ fn client_handler(
         db.make_online(&username, true).unwrap();
 
 
-        clients_lock.retain(|(_, client_name)| client_name != &username);
+        clients_lock.retain(|(_, client_name,_)| client_name != &username);
 
 
-        for (client, client_name) in clients_lock.iter_mut() {
+        for (client, client_name,_) in clients_lock.iter_mut() {
             if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
                 *client_name = username.clone();
             }
@@ -48,7 +48,7 @@ fn client_handler(
 
         let now = Local::now().format("%H:%M").to_string();
         let joined = format!("[{}]: *** {} joined the chat ***\n", now.red(), username.green());
-        for (client, _) in clients_lock.iter_mut() {
+        for (client, _,_) in clients_lock.iter_mut() {
             let _ = client.write_all(joined.as_bytes());
         }
 
@@ -73,7 +73,7 @@ fn client_handler(
                     let mut left_user = None;
                     let mut left_msg = String::new();
                 
-                    for (client, client_name) in clients_lock2.iter() {
+                    for (client, client_name,room_id) in clients_lock2.iter() {
                         if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
                             db.make_online(&client_name, false).unwrap();
                             let now = Local::now().format("%H:%M").to_string();
@@ -84,13 +84,13 @@ fn client_handler(
                     }
                 
 
-                    clients_lock2.retain(|(client, client_name)| {
+                    clients_lock2.retain(|(client, client_name,room_id)| {
                         !(client.peer_addr().unwrap() == stream.peer_addr().unwrap())
                     });
                 
 
                     if !left_msg.is_empty() {
-                        for (c, _) in clients_lock2.iter_mut() {
+                        for (c, _,room_id) in clients_lock2.iter_mut() {
                             let _ = c.write_all(left_msg.as_bytes());
                         }
                     }
@@ -106,14 +106,16 @@ fn client_handler(
                     if message.trim() == "/users" {
                         let users = db.get_users().unwrap();
                         for user in users {
-                            println!("{:?}",user);
+                            stream.write_all(user.as_bytes()).unwrap();
+                            stream.write_all(b"\n").unwrap();
                         }
                     }
                     
                     else if message.trim().starts_with("/rooms") {
                         let rooms = db.get_rooms().unwrap();
                         for room in rooms {
-                            println!("{:?}",room);
+                            stream.write_all(room.as_bytes()).unwrap();
+                            stream.write_all(b"\n").unwrap();
                         }
                     }
                     // create rooms
@@ -147,6 +149,15 @@ fn client_handler(
                             Ok(_) => {
                                 let reply = format!("Room {} Joined Successfully!\n",room_name.green());
                                 current_room_id = db.get_room_id(room_name).unwrap();
+                                {
+                                    let mut clients = clients.lock().unwrap();
+                                    for (client, name, room_ref) in clients.iter_mut() {
+                                        if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                                            *room_ref = room_id;
+                                            break;
+                                        }
+                                    }
+                                }
                                 let _ = stream.write_all(reply.as_bytes());
                             } 
                             Err(_) => {
@@ -170,6 +181,15 @@ fn client_handler(
                         match db.leave_room(&user_id, &room_id) {
                             Ok(_) => {
                                 let reply = format!("Room {} Left Successfully!\n",room_name.red());
+                                {
+                                    let mut clients = clients.lock().unwrap();
+                                    for (client, name, room_ref) in clients.iter_mut() {
+                                        if client.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                                            *room_ref = 1;
+                                            break;
+                                        }
+                                    }
+                                }
                                 let _ = stream.write_all(reply.as_bytes());
                             } 
                             Err(_) => {
@@ -179,11 +199,22 @@ fn client_handler(
                         }
 
                     }
+                    //
+                    else if message.trim() == "/whereami" {
+                        let  clients_lock = clients.lock().unwrap();
+                        for (_, name, rid) in clients_lock.iter() {
+                            if name == &username {
+                                let reply = format!("You are currently in room ID: {}\n", rid);
+                                let _ = stream.write_all(reply.as_bytes());
+                                break;
+                            }
+                        }
+                    }
 
                 }
                 else{
                     db.save_message(&username, &message, &timestamp,&current_room_id).unwrap();
-                    server.handle_message(&username, &message);
+                    server.handle_message(&username, &message,&current_room_id);
                 }
             }
             Err(_) => break,
@@ -193,7 +224,7 @@ fn client_handler(
 
 fn main() {
     let messages:Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let clients:Arc<Mutex<Vec<(TcpStream,String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let clients:Arc<Mutex<Vec<(TcpStream,String,i64)>>> = Arc::new(Mutex::new(Vec::new()));
     let server = Arc::new(ChatServer{
         messages:Arc::clone(&messages),
         clients:Arc::clone(&clients),
@@ -204,9 +235,9 @@ fn main() {
         match stream {
             Ok(stream) => {
                 let server = Arc::clone(&server);
-                let clients_for_thread:Arc<Mutex<Vec<(TcpStream,String)>>> = Arc::clone(&clients);
-                let mut clients: std::sync::MutexGuard<'_, Vec<(TcpStream, String)>> = clients.lock().unwrap();
-                clients.push((stream.try_clone().unwrap(),String::new()));
+                let clients_for_thread:Arc<Mutex<Vec<(TcpStream,String,i64)>>> = Arc::clone(&clients);
+                let mut clients: std::sync::MutexGuard<'_, Vec<(TcpStream, String,i64)>> = clients.lock().unwrap();
+                clients.push((stream.try_clone().unwrap(),String::new(),1));
                 std::thread::spawn(move || {client_handler(stream,server,clients_for_thread)});
             }
             Err(e) => {
